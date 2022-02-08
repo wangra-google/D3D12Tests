@@ -30,3 +30,9 @@
 *.exe
 *.out
 *.app
+
+# output folder
+**/.vs
+**/bin
+**/obj
+*.user
