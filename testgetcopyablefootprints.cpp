@@ -300,8 +300,7 @@ namespace
 		const bool over_limit_3d_texture = ((w > limit_3d_texture) || (h > limit_3d_texture) || (pResourceDesc->DepthOrArraySize > limit_3d_texture));
 		const bool have_zero_size = ((w == 0) || (h == 0) || (pResourceDesc->DepthOrArraySize == 0));
 		uint32_t d = is_3d_texture ? pResourceDesc->DepthOrArraySize : 1;
-		if ((NumSubresources > pResourceDesc->MipLevels)
-			|| (pResourceDesc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
+		if ((pResourceDesc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
 			|| (have_zero_size)
 			|| (is_1d_texture)
 			|| (is_2d_texture && over_limit_2d_texture)
@@ -337,6 +336,13 @@ namespace
 		uint64_t          offset = 0;
 		for (uint32_t i = 0; i < NumSubresources; ++i)
 		{
+			uint32_t j = i % pResourceDesc->MipLevels;
+			if (j == 0)
+			{
+				w = static_cast<uint32_t>(pResourceDesc->Width);
+				h = static_cast<uint32_t>(pResourceDesc->Height);
+			}
+
 			uint32_t row_pitch = 0;
 			uint32_t block_height = 0;
 			GetRowPitchAndBlockHeightInByte(format, w, h, row_pitch, block_height);
