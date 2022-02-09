@@ -5,7 +5,8 @@
 // GetCopyableFootprints Implementation
 namespace
 {
-	static uint32_t RoundUp(uint32_t value, uint32_t multiple)
+	template<typename T>
+	static T RoundUp(T value, T multiple)
 	{
 		assert(multiple && ((multiple & (multiple - 1)) == 0));
 		return (value + multiple - 1) & ~(multiple - 1);
@@ -150,7 +151,7 @@ namespace
 	{
 		row_pitch = width;
 		block_height = height;
-		const uint32_t block_width = RoundUp(width, 4) / 4;
+		const uint32_t block_width = RoundUp<uint32_t>(width, 4) >> 2;
 		switch (format)
 		{
 		case DXGI_FORMAT_R32G32B32A32_TYPELESS:
@@ -227,7 +228,7 @@ namespace
 		case DXGI_FORMAT_R8G8_B8G8_UNORM:
 		case DXGI_FORMAT_G8R8_G8B8_UNORM:
 			row_pitch *= 2;
-			row_pitch = RoundUp(row_pitch, 4);
+			row_pitch = RoundUp<uint32_t>(row_pitch, 4);
 			break;
 		case DXGI_FORMAT_R8_TYPELESS:
 		case DXGI_FORMAT_R8_UNORM:
@@ -243,7 +244,7 @@ namespace
 		case DXGI_FORMAT_BC4_UNORM:
 		case DXGI_FORMAT_BC4_SNORM:
 			row_pitch = block_width * 8;
-			block_height = RoundUp(height, 4) / 4;
+			block_height = RoundUp<uint32_t>(height, 4) / 4;
 			break;
 		case DXGI_FORMAT_BC2_TYPELESS:
 		case DXGI_FORMAT_BC2_UNORM:
@@ -261,7 +262,7 @@ namespace
 		case DXGI_FORMAT_BC7_UNORM:
 		case DXGI_FORMAT_BC7_UNORM_SRGB:
 			row_pitch = block_width * 16;
-			block_height = RoundUp(height, 4) / 4;
+			block_height = RoundUp<uint32_t>(height, 4) / 4;
 			break;
 		default:
 			assert(false && "Unsupported format!");
@@ -293,13 +294,15 @@ namespace
 		const bool is_paired_format = IsPairedFormat(format);
 		uint32_t w = static_cast<uint32_t>(pResourceDesc->Width);
 		uint32_t h = static_cast<uint32_t>(pResourceDesc->Height);
-		uint32_t d = is_3d_texture ? pResourceDesc->DepthOrArraySize : 1;
 		constexpr uint32_t limit_2d_texture = 16384;
 		constexpr uint32_t limit_3d_texture = 2048;
 		const bool over_limit_2d_texture = ((w > limit_2d_texture) || (h > limit_2d_texture) || (pResourceDesc->DepthOrArraySize > limit_3d_texture));
-		const bool over_limit_3d_texture = ((w > limit_3d_texture) || (h > limit_3d_texture) || (d > limit_3d_texture));
+		const bool over_limit_3d_texture = ((w > limit_3d_texture) || (h > limit_3d_texture) || (pResourceDesc->DepthOrArraySize > limit_3d_texture));
+		const bool have_zero_size = ((w == 0) || (h == 0) || (pResourceDesc->DepthOrArraySize == 0));
+		uint32_t d = is_3d_texture ? pResourceDesc->DepthOrArraySize : 1;
 		if ((NumSubresources > pResourceDesc->MipLevels)
 			|| (pResourceDesc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
+			|| (have_zero_size)
 			|| (is_1d_texture)
 			|| (is_2d_texture && over_limit_2d_texture)
 			|| (is_3d_texture && (over_limit_3d_texture || is_aliased || is_depth_format))
@@ -331,38 +334,21 @@ namespace
 			return;
 		}
 
-		/*********************************************************************/
-		// TODO(wangra): there are some weird behaviors in D3D12 when width or 
-		// height is not dividable 16, sometimes the value is round up,  
-		// sometimes it is round down, e.g: 420
-		// Do not support those values for now
-		if (is_bc_format)
-		{
-			assert((w & 15) == 0);
-			assert((h & 15) == 0);
-		}
-
-		if (is_paired_format)
-		{
-			assert((w & 31) == 0);
-		}
-		/*********************************************************************/
-
-		uint32_t          offset = 0;
+		uint64_t          offset = 0;
 		for (uint32_t i = 0; i < NumSubresources; ++i)
 		{
 			uint32_t row_pitch = 0;
 			uint32_t block_height = 0;
 			GetRowPitchAndBlockHeightInByte(format, w, h, row_pitch, block_height);
-			const uint32_t padded_row_pitch = RoundUp(row_pitch, is_aliased ? 512 : 256);
-			w = is_bc_format ? RoundUp(w, 4) : (is_paired_format ? RoundUp(w, 2) : w);
-			h = is_bc_format ? RoundUp(h, 4) : h;
+			const uint32_t padded_row_pitch = RoundUp<uint32_t>(row_pitch, is_aliased ? 512 : 256);
+			uint32_t w_rounded = is_bc_format ? RoundUp<uint32_t>(w, 4) : (is_paired_format ? RoundUp<uint32_t>(w, 2) : w);
+			uint32_t h_rounded = is_bc_format ? RoundUp<uint32_t>(h, 4) : h;
 			if (pLayouts != nullptr)
 			{
 				pLayouts[i].Offset = offset;
 				pLayouts[i].Footprint.Format = format;
-				pLayouts[i].Footprint.Width = w;
-				pLayouts[i].Footprint.Height = h;
+				pLayouts[i].Footprint.Width = w_rounded;
+				pLayouts[i].Footprint.Height = h_rounded;
 				pLayouts[i].Footprint.Depth = d;
 				pLayouts[i].Footprint.RowPitch = padded_row_pitch;
 			}
@@ -384,14 +370,14 @@ namespace
 
 			if (is_last_sub_resource)
 			{
-				uint32_t size = padded_row_pitch * block_height * (d - 1)
+				uint64_t size = padded_row_pitch * block_height * (d - 1)
 					+ padded_row_pitch * (block_height - 1) + row_pitch;
 				offset += size;
 			}
 			else
 			{
 				offset += padded_row_pitch * block_height * d;
-				offset = RoundUp(offset, 512);
+				offset = RoundUp<uint64_t>(offset, 512);
 			}
 
 			if (w > min_w) w = w >> 1;
@@ -409,7 +395,7 @@ namespace
 void D3D12UnitTests::TestGetCopyableFootprints()
 {
 	constexpr uint32_t format_count = uint32_t(DXGI_FORMAT_B4G4R4A4_UNORM) + 1;
-	constexpr uint32_t random_size_count = 5000;
+	constexpr uint32_t random_size_count = 1000;
 	srand(uint32_t(time(nullptr)));
 
 	for (uint32_t f = 0; f < format_count; ++f)
@@ -432,16 +418,14 @@ void D3D12UnitTests::TestGetCopyableFootprints()
 				depth = rand() % 2048;
 			}
 
-			if ((IsBCFormat(format) || IsPairedFormat(format)))
+			if (IsBCFormat(format))
 			{
-				width = RoundUp(width, 16);
-			}
-
-			if (IsBCFormat(format) )
+				width = RoundUp<uint32_t>(width, 4);
+				height = RoundUp<uint32_t>(height, 4);
+			}else if (IsPairedFormat(format))
 			{
-				height = RoundUp(height, 16);
+				width = RoundUp<uint32_t>(width, 2);
 			}
-
 
 			// desc
 			constexpr uint32_t sub_resource_count = 10;
